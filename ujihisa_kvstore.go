@@ -1,14 +1,14 @@
 package main
 
 import (
-    "bytes"
+	"bytes"
 	"errors"
 	"flag"
-    "fmt"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
-    "strings"
+	"strings"
 )
 
 type KVStore map[string]string
@@ -20,7 +20,7 @@ var replicaPorts []int
 const SYNC_GET = "c3luY19nZXQK"
 const SYNC_POST = "c3luY19wb3N0Cg=="
 
-func syncGet (key, val string) (string, error) {
+func syncGet(key, val string) (string, error) {
 	syncTable := map[int]string{}
 	for _, p := range replicaPorts {
 		if p == ownPort {
@@ -63,7 +63,7 @@ func syncGet (key, val string) (string, error) {
 	return majorV, nil
 }
 
-func syncPost (key, val string) error {
+func syncPost(key, val string) error {
 	successCount := 0
 	for _, p := range replicaPorts {
 		if p == ownPort {
@@ -86,11 +86,11 @@ func syncPost (key, val string) error {
 func getHandler(w http.ResponseWriter, r *http.Request) {
 	params := r.URL.Query()
 	isSyncGetReq := len(params.Get(SYNC_GET)) > 0
-    key := r.URL.Path
-    v, ok := datastore[key]
+	key := r.URL.Path
+	v, ok := datastore[key]
 	if !isSyncGetReq {
 		fmt.Printf("received an origin request(%d)\n", ownPort)
-		if syncV, err := syncGet(key, v); err == nil  {
+		if syncV, err := syncGet(key, v); err == nil {
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprintf(w, syncV)
 		} else {
@@ -113,10 +113,10 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 	params := r.URL.Query()
 	isSyncPostReq := len(params.Get(SYNC_POST)) > 0
 
-    key := r.URL.Path
-    buf := new(bytes.Buffer)
-    buf.ReadFrom(r.Body)
-    v := buf.String()
+	key := r.URL.Path
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(r.Body)
+	v := buf.String()
 	datastore[key] = v
 
 	if isSyncPostReq {
@@ -133,44 +133,46 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-    switch r.Method {
-    case "GET": getHandler(w, r)
-    case "POST": postHandler(w, r)
-    default: fmt.Printf("found unsupported method")
-    }
+	switch r.Method {
+	case "GET":
+		getHandler(w, r)
+	case "POST":
+		postHandler(w, r)
+	default:
+		fmt.Printf("found unsupported method")
+	}
 }
 
 func main() {
 	var (
-	    port = flag.Int("p", 8000, "the port to which the process listens")
-	    replicas = flag.String("m", "8000,8001,8002", "the accessible ports")
-    )
-    flag.Parse()
+		port     = flag.Int("p", 8000, "the port to which the process listens")
+		replicas = flag.String("m", "8000,8001,8002", "the accessible ports")
+	)
+	flag.Parse()
 	ownPort = *port
 	replicaPorts = []int{}
 	for _, origPort := range strings.Split(*replicas, ",") {
-        p, err := strconv.Atoi(origPort)
-        if err != nil {
-        	panic("given invalid replica ports")
-        }
-	    replicaPorts = append(replicaPorts, p)
-    }
+		p, err := strconv.Atoi(origPort)
+		if err != nil {
+			panic("given invalid replica ports")
+		}
+		replicaPorts = append(replicaPorts, p)
+	}
 	var included = false
 	for _, p := range replicaPorts {
-	    if ownPort == p {
-	    	included = true
+		if ownPort == p {
+			included = true
 		}
-    }
+	}
 	if !included {
 		panic("found invalid port")
 	}
 
-
 	fmt.Printf("Port: %d\n", ownPort)
-    fmt.Printf("Replica ports: %v\n", replicaPorts)
+	fmt.Printf("Replica ports: %v\n", replicaPorts)
 
-    datastore = KVStore{}
-    http.HandleFunc("/", handler)
-    addr := fmt.Sprintf(":%d", *port)
-    http.ListenAndServe(addr, nil)
+	datastore = KVStore{}
+	http.HandleFunc("/", handler)
+	addr := fmt.Sprintf(":%d", *port)
+	http.ListenAndServe(addr, nil)
 }
