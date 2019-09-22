@@ -2,7 +2,8 @@ package main
 
 import (
     "bytes"
-    "flag"
+	"errors"
+	"flag"
     "fmt"
     "net/http"
     "strconv"
@@ -15,15 +16,41 @@ var datastore KVStore
 var ownPort int
 var mirrorPorts []int
 
+func sync (key, val string) error {
+	var failedCount int
+	for _, p := range mirrorPorts {
+		fmt.Printf("Begin sync with %d\n", p)
+		if p == ownPort {
+			fmt.Println("skipped (self sync)")
+			continue
+		}
+		url := fmt.Sprintf("http://localhost:%d%s", p, key)
+		client := &http.Client{}
+		resp, err := client.Post(url, "text/plain", strings.NewReader(val))
+		if err != nil {
+			panic("unexpected error")
+		}
+		if resp.StatusCode != 200 {
+			failedCount++
+		}
+	}
+	if failedCount >= 2 {
+		return errors.New("failed to sync")
+	}
+	fmt.Println("Synced")
+	return nil
+}
+
 func getHandler(w http.ResponseWriter, r *http.Request) {
     key := r.URL.Path
     v, ok := datastore[key]
     if ok {
         fmt.Printf("Hit(:%d): key=%s with value=%v\n", ownPort, key, v)
-        fmt.Fprintf(w, v)
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, v)
     } else {
         fmt.Printf("Missing(:%d): key=%s\n", ownPort, key)
-        fmt.Fprintf(w, "not found")
+		w.WriteHeader(http.StatusNotFound)
     }
 }
 
@@ -40,6 +67,13 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
     }
     fmt.Printf("key=%s with value=%v\n", key, v)
     datastore[key] = v
+
+    err := sync(key, v)
+    if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
