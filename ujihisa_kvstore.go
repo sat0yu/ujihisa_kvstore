@@ -6,7 +6,8 @@ import (
 	"flag"
     "fmt"
 	"net/http"
-    "strconv"
+	"net/url"
+	"strconv"
     "strings"
 )
 
@@ -17,7 +18,7 @@ var ownPort int
 var replicaPorts []int
 
 const SYNC_GET = "c3luY19nZXQK"
-const SYNC_POST = "c3luY19wb3N0Cg%3D%3D"
+const SYNC_POST = "c3luY19wb3N0Cg=="
 
 func syncGet (key, val string) (string, error) {
 	syncTable := map[int]string{}
@@ -26,9 +27,9 @@ func syncGet (key, val string) (string, error) {
 			syncTable[p] = val
 			continue
 		}
-		url := fmt.Sprintf("http://localhost:%d%s?%s=true", p, key, SYNC_GET)
+		u := fmt.Sprintf("http://localhost:%d%s?%s=true", p, key, url.QueryEscape(SYNC_GET))
 		client := &http.Client{}
-		r, err := client.Get(url)
+		r, err := client.Get(u)
 		if err != nil || r.StatusCode != 200 {
 			syncTable[p] = ""
 			continue
@@ -62,28 +63,23 @@ func syncGet (key, val string) (string, error) {
 	return majorV, nil
 }
 
-func sync (key, val string) (error) {
-	var failedCount int
+func syncPost (key, val string) error {
+	successCount := 0
 	for _, p := range replicaPorts {
-		fmt.Printf("Begin sync with %d\n", p)
 		if p == ownPort {
-			fmt.Println("skipped (self sync)")
 			continue
 		}
-		url := fmt.Sprintf("http://localhost:%d%s", p, key)
+		u := fmt.Sprintf("http://localhost:%d%s?%s=true", p, key, url.QueryEscape(SYNC_POST))
 		client := &http.Client{}
-		resp, err := client.Post(url, "text/plain", strings.NewReader(val))
-		if err != nil {
-			panic("unexpected error")
+		resp, err := client.Post(u, "text/plain", strings.NewReader(val))
+		if err != nil || resp.StatusCode != 200 {
+			continue
 		}
-		if resp.StatusCode != 200 {
-			failedCount++
-		}
+		successCount++
 	}
-	if failedCount >= 2 {
+	if !(successCount > len(replicaPorts)/2) {
 		return errors.New("failed to sync")
 	}
-	fmt.Println("Synced")
 	return nil
 }
 
@@ -114,24 +110,25 @@ func getHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func postHandler(w http.ResponseWriter, r *http.Request) {
+	params := r.URL.Query()
+	isSyncPostReq := len(params.Get(SYNC_POST)) > 0
+
     key := r.URL.Path
     buf := new(bytes.Buffer)
     buf.ReadFrom(r.Body)
     v := buf.String()
-    _, ok := datastore[key]
-    if ok {
-        fmt.Printf("Updatnig(:%d): ", ownPort)
-    } else {
-        fmt.Printf("Inserting(:%d): ", ownPort)
-    }
-    fmt.Printf("key=%s with value=%v\n", key, v)
-    datastore[key] = v
+	datastore[key] = v
 
-    //err := sync(key, v)
-    //if err != nil {
-	//	w.WriteHeader(http.StatusInternalServerError)
-	//	return
-	//}
+	if isSyncPostReq {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	err := syncPost(key, v)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
